@@ -1,0 +1,281 @@
+---
+title: "Data Cleaning Project"
+author: "Victoria Bruku"
+date: "2025-03-04"
+output: html_document
+---
+*INTRODUCTIUON*
+
+Data cleaning is a crucial step in preparing a dataset for meaningful analysis. The dataset(GRAIN---Land-grab-deals---Jan-2012-2.xlsx") at hand contains information on land deals, including variables such as **year, country, investor, sector, production type, status of the deal, and projected investment**. However, the raw data presents several inconsistencies, including **missing values, formatting errors, spelling variations, and outliers**, which need to be addressed before analysis can be performed accurately.  
+
+In this cleaning process, I will:  
+- **Standardize formatting** by ensuring consistency in text case and removing unnecessary punctuation.  
+- **Handle missing data** by either imputing values where appropriate or removing columns with excessive unknowns.  
+- **Correct data types** to ensure numerical and categorical variables are properly classified.  
+- **Detect and manage outliers** to prevent skewed analysis.  
+- **Resolve inconsistencies** in categorical data by fixing spelling variations and combining similar categories.  
+
+Once cleaned, the dataset can be used to analyze **trends in land acquisition, investment patterns across different sectors, country-wise distribution of land deals, and the overall impact of these deals on agriculture and industry**. Additionally, visualizations such as **histograms, box plots, and bar charts** will help identify patterns and anomalies, ensuring a more comprehensive and reliable analysis.  
+
+
+```{r setup, include=FALSE}
+# we first need to load the necessary packages for this task
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+
+#define file path (the file is an excel file)
+file <- ("C:/Users/victo/Documents/DCleaning/practicum ANA-515/GRAIN---Land-grab-deals---Jan-2012-2.xlsx")
+
+# the excel file contains two sheets so we load both sheet
+sheet1 <- read_excel(file, sheet = "Sheet1")
+sheet2 <- read_excel(file, sheet = "Sheet2")
+
+#since the variable "year" is not numeric in both sheets, we have to correct that else we cannot bind the two sheets 
+sheet1$Year <- as.numeric(sheet1$Year)
+sheet2$Year <- as.numeric(sheet2$Year)
+
+# we want to combine the two sheets into one file
+main_file <- bind_rows(sheet1, sheet2)
+
+```
+
+```{r, include=TRUE}
+#checking the combined file before cleaning
+#structure of the dataset
+str(main_file)
+
+#summary statistics
+summary(main_file)
+
+# Checking for missing values
+colSums(is.na(main_file))
+
+```
+
+```{r, include=FALSE}
+# Standardize column names (by converting to lowercase, replacing spaces with underscores)
+colnames(main_file) <- tolower(gsub(" ", "_", colnames(main_file)))
+
+#Trim leading and trailing spaces from all character columns
+main_file <- main_file %>% 
+  mutate(across(where(is.character), ~trimws(.)))
+
+```
+
+**The Status of Deal column**
+There are eight observation with misspells or inconsistent word choice in the status of deal column
+
+```{r, include=FALSE}
+#Fixing spelling inconsistencies in the status of deal column
+
+main_file$status_of_deal <- recode(main_file$status_of_deal, "Don" = "Done","Done (50-yr lease)"="Done", "Done - 15/08/2011" = "Done","Complete"= "Done" , "MoU signed (2009)" = "Proposed","Suspended (October 2011)" = "Suspended", "Inprocess"= "In process")
+
+# frequency of the status deal column
+status_counts <- table(main_file$status_of_deal)
+
+```
+
+**The Sector column**
+```{r, include=FALSE}
+# changing to titlecase in the sector column
+main_file$sector <- tools::toTitleCase(tolower(main_file$sector))
+
+#Replacing Commas with a Separator (|) to aid easy analysis
+main_file$sector <- gsub(",", " |", main_file$sector)
+
+# fixing spelling inconsistencies in the sector column
+main_file$sector <- recode(main_file$sector, "Ab"="Agribusiness","Agribus"="Agirbusiness","Agribussiness"= "Agribusiness", "Agirbusiness"="Agribusiness", "Fin"="Finance","Na"= "Unknown")
+
+main_file$sector <- recode(main_file$sector,"Agribusiness | | | Energy" = "Agribusiness | Energy") 
+
+#replacing NA's in the sector column
+main_file$sector[is.na(main_file$sector)] <- "Unknown"
+
+# frequency of the sector column
+sector_counts <- table(main_file$sector) # makes it easy to spot any remaining errors
+
+```
+
+**The Base column**
+```{r, include=FALSE}
+
+# fixing spelling inconsistencies in the base column
+main_file$base <- recode(main_file$base, "UNITED STATES" ="US", "UNITED KINGDOM"="UK","United Kingdom"="UK","Gemany"="Germany","Fran"="France", "NA"= "Unknown","--"="Unknown") 
+
+#Frequency count of the base column
+base_counts <- table(main_file$base)
+
+```
+
+**The hectares column**
+```{r, include=FALSE}
+#changing a value in the hectares column by using information from the summary, this was an error in the data
+main_file$hectares[main_file$hectares == 2] <- 25000
+```
+
+**The Production column**
+```{r, include=FALSE}
+# changing to titlecase in the production column
+main_file$production <- tools::toTitleCase(tolower(main_file$production))
+
+#replacing NA's in the production column
+main_file$production[is.na(main_file$production)] <- "Unknown"
+
+#Remove texts after (;) including the semicolon (;)
+main_file$production <- str_remove(main_file$production, ";.*")
+
+# fixing spelling inconsistencies in the production column
+main_file$production <- recode(main_file$production, "Various"= "Crop", "Variou"="Crop")
+
+#Remove certain phrases and spaces
+main_file$production <- gsub("and other","|", main_file$production)
+main_file$production <- gsub("and ","|", main_file$production)
+
+#Removing 's' at the end of certain words and words inside brackets [()] 
+# Clean the 'production' column
+main_file$production <- main_file$production %>%
+  
+  # Remove 's' at the end of words (but not single 's' words)
+  str_replace_all("\\b(\\w+)s\\b", "\\1") %>%
+  
+  # Remove text inside brackets (e.g., "(example)")
+  str_remove_all("\\(.*?\\)")
+
+
+#Replacing Commas with a Separator (|) to aid easy analysis
+main_file$production <- gsub(",", " |", main_file$production)
+
+#Frequency count of the base column
+production_counts <- table(main_file$production)
+
+```
+
+**The Year column**
+First finding those with the incorrect date format
+```{r, include=FALSE}
+
+# Find missing or incorrect years (e.g., years that are NA or unrealistic)
+incorrect_years <- main_file %>%
+  filter(is.na(year) | year < 1900 | year > as.numeric(format(Sys.Date(), "%Y")))
+
+```
+ 
+16 observations have their years in a wrong format or not available
+  
+```{r, include=FALSE}
+main_file$year[main_file$year == 0] <- 2000
+main_file$year[main_file$year == 17] <- 2017
+main_file$year[main_file$year == 41000] <- 2017
+main_file$year[main_file$year == 42675] <- 2017
+main_file$year[is.na(main_file$year)] <- 2017  # filling NA's with 2017
+
+```
+
+**The Land Grabber column**
+```{r, include=FALSE}
+#remove extra quotation marks and commas from the 'langrabber'
+main_file$landgrabber <- sub("[/,.]","", main_file$landgrabber)
+
+# Remove only the quotation marks while keeping the text inside
+main_file$landgrabber <- str_replace_all(main_file$landgrabber, '"', '')
+```
+
+**The Land Grabbed column**
+```{r, include=FALSE}
+#fixing spelling inconsistencies in the landgrabbed column
+main_file$landgrabbed <- recode(main_file$landgrabbed, "Aus"= "Australia","AUS" = "Australia", "US"="United States","Arg"= "Argentina","---"="Unknown")
+
+#Remove texts after (,) including the comma (,)
+main_file$landgrabbed <- str_remove(main_file$landgrabbed, ",.*")
+
+#remove extra quotation marks and commas from the 'langrabber'
+main_file$landgrabbed <- sub("[-]"," ", main_file$landgrabbed)
+
+```
+
+**The Projected Investment column**
+
+```{r, include= FALSE}
+#Assessing whether to delete the 'projected investment' column
+# Count missing values
+missing_percent <- sum(is.na(main_file$projected_investment) | main_file$projected_investment == "Unknown") / nrow(main_file) * 100
+
+# Print the percentage of missing values
+print(paste("Missing or Unknown Data:", round(missing_percent, 2), "%"))
+
+
+# 72% of the data is unknown hence I will go ahead to delete that column
+main_file <- select(main_file, -projected_investment)
+
+# rearranging the landgrabbed column
+final <- arrange(main_file,landgrabbed)
+
+#The dataset is now cleaned 
+#Saving the cleaned dataset in csv form
+write.csv(final, "GRAIN_cleaned.csv", row.names = FALSE)
+
+```
+
+
+**Summary of the variables in the cleaned dataset**
+```{r, echo=FALSE}
+library(knitr)
+
+# dataframe with column details
+column_info <- data.frame(
+  Column_Number = c(1,2,3,4,5,6,7,8,9),  
+  Column_Name = c("landgrabbed", "landgrabber", "base", "sector", "hectares", "production", "year", "status_of_deal", "summary"),
+  Description = c("the country in which land was acquired",
+                 "the country, company or association that acquire the land",
+                 "the country where the landgrabbers are base or have their company",
+                 "the category of value chain of what the acquired land is being used for",
+                 "the area measurement of the acquired land",
+                 "the end material or produce of the acquired land (eg:cotton,rice,fruits etc.)",
+                 "the year in which the land was aquired,project on the land started or the year the knowledge of the acquisition was made public",
+                 "the state of the project being done on the land,whether completed,cancel,postponed or ongoing",
+                 "a brief introduction of the landgrabbers, landgrabed and the ongoing production on the land")
+)
+
+# using knitr::kable() to print the table
+kable(column_info, caption = "Summary of Selected Columns in the Grain_cleaned Dataset")
+
+```
+
+
+***VISUALIZATION***
+For outlier detection,I will make use of the IQR method,which is one of the most effective and widely used techniques to detect outliers because it focuses on the spread of the middle 50% of the data while ignoring extreme values. And also using a Boxplot which easy to interpret and also quickly shows the distribution and outliers but does not quantify exact outlier values.
+
+```{r,echo =FALSE}
+# Identify outliers using both the IQR method and box plot for the numeric columns
+#year outliers
+Q1_year <- quantile(final$year, 0.25, na.rm = TRUE)
+Q3_year <- quantile(final$year, 0.75, na.rm = TRUE)
+IQR_year <- Q3_year - Q1_year
+
+year_outliers <- final %>% filter(year >= (Q1_year - 1.5 * IQR_year) & year <= (Q3_year + 1.5 * IQR_year))
+
+print(year_outliers)
+
+#hectares outliers
+Q1_hectares <- quantile(final$hectares, 0.25, na.rm = TRUE)
+Q3_hectares <- quantile(final$hectares, 0.75, na.rm = TRUE)
+IQR_hectares <- Q3_hectares - Q1_hectares
+
+hectares_outliers <- final %>% filter(hectares >= (Q1_hectares - 1.5 * IQR_hectares) & hectares <= (Q3_hectares + 1.5 * IQR_hectares))
+
+print(hectares_outliers)
+
+# Boxplot for Year
+boxplot(final$year, main = "Boxplot of Year", horizontal = TRUE, col = "blue")
+
+# Boxplot for Hectares
+boxplot(final$hectares, main = "Boxplot of Hectares", horizontal = TRUE, col = "violet")
+
+# Bar plot for status of deal
+barplot(status_counts, main = "Distribution of Project Progress", xlab = "Progress", col = "darkgreen", border = "black")
+
+```
+
+
